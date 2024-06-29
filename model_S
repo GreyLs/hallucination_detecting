@@ -1,0 +1,158 @@
+import numpy as np
+import re
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
+from torch.utils.data import DataLoader
+from torch.optim import AdamW
+from tqdm import tqdm
+from torch.nn.functional import cross_entropy
+
+# функция для очистки текста от лишних символов
+def clean_text(text):
+    text = re.sub(r'[^а-яА-ЯёЁa-zA-Z0-9]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+# функция для объединения батчей
+def collate_fn(batch, tokenizer, max_len=512):
+    texts, labels = zip(*batch)
+
+    tokenized_texts = tokenizer.batch_encode_plus(
+        list(texts),
+        add_special_tokens=True,
+        max_length=max_len,
+        truncation=True,
+        padding=True,
+        return_tensors='pt'
+    )
+
+    input_ids = tokenized_texts['input_ids']
+    attention_mask = tokenized_texts['attention_mask']
+    labels = torch.tensor(labels, dtype=torch.long)
+
+    return {
+        'input_ids': input_ids,
+        'attention_mask': attention_mask,
+        'labels': labels
+    }
+
+# загрузка и подготовка данных
+df = pd.read_csv('/content/drive/My Drive/train.csv')
+df['summary'] = df['summary'].apply(clean_text)
+df['question'] = df['question'].apply(clean_text)
+df['answer'] = df['answer'].apply(clean_text)
+
+# объединение текстов в один столбец
+df['text'] = df['summary'] + ' ' + df['question'] + ' ' + df['answer']
+
+# разделение данных на признаки и метки
+X = df['text']
+y = df['is_hallucination']
+
+# инициализация токенизатора и модели (DeepPavlov/rubert-base-cased)
+model_name = 'DeepPavlov/rubert-base-cased'
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
+
+# гиперпараметры
+learning_rate = 1e-5
+batch_size = 32
+num_epochs = 10
+patience = 3
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+cv_scores = []
+
+early_stop = False  # флаг для остановки внешнего цикла
+
+for train_index, val_index in kf.split(X, y):
+    if early_stop:
+        break  # выход из внешнего цикла кросс-валидации при ранней остановке
+
+    X_train, X_val = X.iloc[train_index], X.iloc[val_index]
+    y_train, y_val = y.iloc[train_index], y.iloc[val_index]
+
+    train_dataloader = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True,
+                                 collate_fn=lambda batch: collate_fn(batch, tokenizer, max_len=512))
+    val_dataloader = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size,
+                               collate_fn=lambda batch: collate_fn(batch, tokenizer, max_len=512))
+
+    optimizer = AdamW(model.parameters(), lr=learning_rate)
+
+    # Early stopping
+    best_f1 = 0
+
+    # Тренировка модели
+    for epoch in range(num_epochs):
+        model.train()
+        train_preds = []
+        train_labels = []
+        for batch in tqdm(train_dataloader, desc=f"Training Epoch {epoch + 1}"):
+            optimizer.zero_grad()
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            logits = outputs.logits
+            loss = cross_entropy(logits, labels)
+            loss.backward()
+            optimizer.step()
+
+            # собираем предсказания и метки для обучающей выборки
+            preds = torch.argmax(logits, dim=1).cpu().numpy().tolist()
+            train_preds.extend(preds)
+            train_labels.extend(labels.cpu().numpy().tolist())
+
+        # вычисляем F1-micro для обучающей выборки
+        train_f1 = f1_score(train_labels, train_preds, average='micro')
+
+        # валидация модели
+        model.eval()
+        val_preds = []
+        val_labels = []
+        with torch.no_grad():
+            for batch in tqdm(val_dataloader, desc="Validation"):
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+                labels = batch['labels'].to(device)
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                logits = outputs.logits
+                preds = torch.argmax(logits, dim=1).cpu().numpy().tolist()
+                val_preds.extend(preds)
+                val_labels.extend(labels.cpu().numpy().tolist())
+
+        val_f1 = f1_score(val_labels, val_preds, average='micro')
+
+        print(f"Epoch {epoch+1} - Train F1: {train_f1:.4f}, Val F1: {val_f1:.4f}")
+
+        if train_f1 > 0.98 and val_f1 > 0.98:
+            print("Early stopping!")
+            early_stop = True  # флаг для остановки внешнего цикла
+            # сохранение модели после обучения
+            torch.save(model.state_dict(), "/content/drive/My Drive/model_S.pth") # уточните Ваш путь
+
+            # сохраняем предсказания для тестовой части данных
+            test_dataloader = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size,
+                                 collate_fn=lambda batch: collate_fn(batch, tokenizer, max_len=512))
+
+            predictions = []
+            with torch.no_grad():
+                for batch in tqdm(test_dataloader, desc="Testing"):
+                    input_ids = batch['input_ids'].to(device)
+                    attention_mask = batch['attention_mask'].to(device)
+                    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                    logits = outputs.logits
+                    preds = torch.argmax(logits, dim=1).cpu().numpy().tolist()
+                    predictions.extend(preds)
+
+            # создаём submission.csv
+            submission_df = pd.DataFrame({'id': val_index, 'is_hallucination': predictions})
+            submission_df.to_csv('/content/drive/My Drive/submission.csv', index=False) # уточните Ваш путь
+
+            break
