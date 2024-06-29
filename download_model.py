@@ -2,7 +2,7 @@ import os
 import shutil
 
 model_name = "DeepPavlov/rubert-base-cased"
-save_directory = "./saved_models/best_model_Savvy_24"
+save_directory = "./saved_models/model_S" # Убедитесь, что Вы сохранили Вашу обученную модель в папку saved_models
 
 # Создаем папки, если их нет
 if not os.path.exists("model"):
@@ -17,8 +17,8 @@ tokenizer = AutoTokenizer.from_pretrained('./tokenizer')  # Предполага
 loaded_tokenizer = tokenizer
 
 # Проверка наличия файла модели перед копированием
-if os.path.exists("saved_models/best_model_Savvy_24/best_model_Savvy_24.pth"):
-    shutil.copyfile("saved_models/best_model_Savvy_24/best_model_Savvy_24.pth", "model/best_model_Savvy_24.pth")
+if os.path.exists("saved_models/model_S.pth"):
+    shutil.copyfile("saved_models/model_S.pth", "model/model_S.pth")
 else:
     print("Model file not found!")
 
