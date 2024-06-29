@@ -48,12 +48,12 @@ RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClass
                tokenizer = AutoTokenizer.from_pretrained(model_name); \
                model = AutoModelForSequenceClassification.from_pretrained(model_name); \
                tokenizer.save_pretrained('/app/tokenizer'); \
-               model.save_pretrained('/app/saved_models/best_model_Savvy_24')"
+               model.save_pretrained('/app/saved_models/model_S')"
 
 # Сохранение модели и токенизатора в pickle-файлы
 RUN python -c "import pickle; from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
                tokenizer = AutoTokenizer.from_pretrained('/app/tokenizer'); \
-               model = AutoModelForSequenceClassification.from_pretrained('/app/saved_models/best_model_Savvy_24'); \
+               model = AutoModelForSequenceClassification.from_pretrained('/app/saved_models/model_S'); \
                pickle.dump(tokenizer, open('/app/tokenizer.pkl', 'wb')); \
                pickle.dump(model, open('/app/model.pkl', 'wb'))"
 
