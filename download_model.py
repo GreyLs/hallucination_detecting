@@ -2,7 +2,7 @@ import os
 import shutil
 
 model_name = "DeepPavlov/rubert-base-cased"
-save_directory = "./saved_models/model_S" # Убедитесь, что Вы сохранили Вашу обученную модель в папку saved_models
+save_directory = "./saved_models/model_S" # убедитесь, что Вы сохранили Вашу обученную модель в папку saved_models или внесите соответствующие зменения
 
 # Создаем папки, если их нет
 if not os.path.exists("model"):
